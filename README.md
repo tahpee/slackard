@@ -59,6 +59,19 @@ def listen(message):
     pass
 ```
 
+### Timed Tasks
+
+Timed tasks are called at the end of the main reactor loop. This means that 
+the minimum time between calls to the task will be the 
+  task interval + slack poll time (5s) + time to process messages
+
+```python
+@bot.timed_task(10)
+def task():
+    # This task will be called every 10 seconds
+    bot.speak("At least 10 seconds has past since the last time this task was called")
+``` 
+
 ## License
 
 
