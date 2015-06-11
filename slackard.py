@@ -11,6 +11,7 @@ import slacker
 import sys
 import time
 import yaml
+import logging
 
 
 class SlackardFatalError(Exception):
@@ -37,6 +38,7 @@ class Slackard(object):
     subscribers = []
     commands = []
     firehoses = []
+    timed_tasks = []
 
     def __init__(self, config_file):
         self.config = Config(config_file)
@@ -45,6 +47,7 @@ class Slackard(object):
         self.botnick = self.config.slackard['botnick']
         self.channel = self.config.slackard['channel']
         self.plugins = self.config.slackard['plugins']
+        self.topic = self.config.slackard['topic']
         try:
             self.boticon = self.config.slackard['boticon']
         except:
@@ -58,6 +61,7 @@ class Slackard(object):
         return 'I am a Slackard!'
 
     def _import_plugins(self):
+        logging.debug("Importing plugins...")
         self._set_import_path()
         plugin_prefix = os.path.split(self.plugins)[-1]
 
@@ -68,10 +72,8 @@ class Slackard(object):
 
         for plugin in glob('{}/[!_]*.py'.format(self._get_plugin_path())):
             module = '.'.join((plugin_prefix, os.path.split(plugin)[-1][:-3]))
-            try:
-                importlib.import_module(module)
-            except Exception as e:
-                print('Failed to import {0}: {1}'.format(module, e))
+            logging.debug("Importing module %s" % (module))
+            importlib.import_module(module)
 
     def _get_plugin_path(self):
         path = self.plugins
@@ -131,11 +133,25 @@ class Slackard(object):
         info = self.slack.channels.info(channel=self.chan_id)
         return info.body['channel']
 
+    def run_timed_tasks(self):
+        logging.debug("Checking for timed tasks")
+        for task in self.timed_tasks:
+            if task['last'] is None:
+                logging.debug("Running timed task")
+                task['function']()
+                task['last'] = time.time()
+            else:
+                delta_t = time.time() - task['last']
+                if delta_t >= task['interval']:
+                    task['function']()
+                    task['last'] = time.time()
+
     def run(self):
         self._init_connection()
         self._import_plugins()
+        self.set_topic(self.topic)
 
-        cmd_matcher = re.compile('^{0}:\s*(\S+)\s*(.*)'.format(
+        cmd_matcher = re.compile('^@*{0}:*\s*(\S+)\s*(.*)'.format(
                                  self.botnick), re.IGNORECASE)
         h = self.slack.channels.history(self.chan_id, count=1)
         assert(h.successful)
@@ -175,12 +191,14 @@ class Slackard(object):
                     for (f, matcher) in self.subscribers:
                         if matcher.search(message['text']):
                             f(message['text'])
+
                     m = cmd_matcher.match(message['text'])
                     if m:
                         cmd, args = m.groups()
                         for (f, command) in self.commands:
                             if command == cmd:
                                 f(args)
+            self.run_timed_tasks()
 
     def subscribe(self, pattern):
         if hasattr(pattern, '__call__'):
@@ -222,6 +240,16 @@ class Slackard(object):
         self.firehoses.append(_f)
         return _f
 
+    def timed_task(self, interval):
+        def real_command(wrapped):
+            @functools.wraps(wrapped)
+            def _f(*args, **kwargs):
+                return wrapped(*args, **kwargs)
+            task = {'function': _f, 'interval': interval, 'last': None}
+            self.timed_tasks.append(task)
+            return _f
+        return real_command
+
 
 def usage():
     yaml_template = """
@@ -242,6 +270,8 @@ def usage():
 
 
 def main():
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',)
+    # logging.getLogger('').addHandler(logging.StreamHandler())
     config_file = None
     try:
         config_file = sys.argv[1]
@@ -259,7 +289,8 @@ def main():
     try:
         bot = Slackard(config_file)
     except Exception as e:
-        print('Encountered error: {}'.format(e.message))
+        print(e)
+        print('Encountered config error: {}'.format(e.message))
         sys.exit(1)
 
     while True:
@@ -274,9 +305,6 @@ def main():
             print('Delaying for {} seconds...'.format(delay))
             time.sleep(delay)
             bot._init_connection()
-        except Exception as e:
-            print('Unhandled exception: {}'.format(e.message))
-            sys.exit(1)
 
 
 if __name__ == '__main__':
