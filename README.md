@@ -65,8 +65,15 @@ Timed tasks are called at the end of the main reactor loop. This means that
 the minimum time between calls to the task will be the 
   task interval + slack poll time (5s) + time to process messages
 
+There are 3 optional arguments:
+* start - The start hour (inclusive)
+* end - The end hour (inclusive)
+* days - 7 element tuple/list that has a boolean for each day of the week, starting Monday.
+
+The example below runs the task every 10 seconds between 7am and 7pm, Monday through Friday.
+
 ```python
-@bot.timed_task(10)
+@bot.timed_task(10, 7, 19, [True, True, True, True, True, False, False])
 def task():
     # This task will be called every 10 seconds
     bot.speak("At least 10 seconds has past since the last time this task was called")
