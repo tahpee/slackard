@@ -12,6 +12,7 @@ import sys
 import time
 import yaml
 import logging
+import datetime
 
 
 class SlackardFatalError(Exception):
@@ -127,7 +128,9 @@ class Slackard(object):
                                 title=title)
 
     def set_topic(self, topic):
-        self.slack.channels.set_topic(channel=self.chan_id, topic=topic)
+        info = self.channel_info()
+        if info['topic']['value'] != topic:
+            self.slack.channels.set_topic(channel=self.chan_id, topic=topic)
 
     def channel_info(self):
         info = self.slack.channels.info(channel=self.chan_id)
@@ -135,20 +138,23 @@ class Slackard(object):
 
     def run_timed_tasks(self):
         logging.debug("Checking for timed tasks")
+        now = datetime.datetime.now()
         for task in self.timed_tasks:
-            if task['last'] is None:
-                logging.debug("Running timed task")
-                task['function']()
-                task['last'] = time.time()
-            else:
-                delta_t = time.time() - task['last']
-                if delta_t >= task['interval']:
+            if now.hour >= task['start'] and now.hour <= task['end'] and task['days'][now.weekday()]:
+                if task['last'] is None:
+                    logging.debug("Running timed task")
                     task['function']()
                     task['last'] = time.time()
+                else:
+                    delta_t = time.time() - task['last']
+                    if delta_t >= task['interval']:
+                        task['function']()
+                        task['last'] = time.time()
 
     def run(self):
         self._init_connection()
         self._import_plugins()
+        print(self.channel_info())
         self.set_topic(self.topic)
 
         cmd_matcher = re.compile('^@*{0}:*\s*(\S+)\s*(.*)'.format(
@@ -240,12 +246,12 @@ class Slackard(object):
         self.firehoses.append(_f)
         return _f
 
-    def timed_task(self, interval):
+    def timed_task(self, interval, start=0, end=24, days=(True, True, True, True, True, True, True)):
         def real_command(wrapped):
             @functools.wraps(wrapped)
             def _f(*args, **kwargs):
                 return wrapped(*args, **kwargs)
-            task = {'function': _f, 'interval': interval, 'last': None}
+            task = {'function': _f, 'interval': interval, 'last': None, 'start': start, 'end': end, 'days': days}
             self.timed_tasks.append(task)
             return _f
         return real_command
